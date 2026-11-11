@@ -1,0 +1,10 @@
+[
+  {"name": "Netflix", "match": "^Netflix$"},
+  {"name": "HBO Max", "match": "^(HBO )?Max$"},
+  {"name": "Disney+", "match": "^Disney Plus$"},
+  {"name": "Apple TV+", "match": "^Apple TV( Plus|\\+)?$"},
+  {"name": "Prime Video", "match": "^Amazon Prime Video$"},
+  {"name": "SkyShowtime", "match": "^SkyShowtime$"},
+  {"name": "Canal+", "match": "^CANAL\\+$"},
+  {"name": "Player", "match": "^Player$", "series_only": true}
+]

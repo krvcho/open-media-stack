@@ -1,0 +1,66 @@
+# Alert routing to Telegram. entrypoint.sh writes the bot token from the stack's environment
+# to /tmp and puts the chat id and ALERT_TIMEZONE in place of __CHAT_ID__ and __TZ__.
+#   critical  at once, with sound, again every 2 h while it fires, and a message when it resolves
+#   warning   silent, held during quiet hours (23:00-08:00), again every 12 h, no resolved message
+#   info      Grafana only
+#   Watchdog  one silent heartbeat a day at 10:00: if it stops coming, monitoring itself is down
+templates:
+  - /tmp/telegram.tmpl
+
+route:
+  receiver: none
+  group_by: [alertname, project]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    - matchers: ['alertname="Watchdog"']
+      receiver: heartbeat
+      repeat_interval: 23h
+      active_time_intervals: [heartbeat]
+    - matchers: ['severity="critical"']
+      receiver: critical
+      repeat_interval: 2h
+    - matchers: ['severity="warning"']
+      receiver: warning
+      mute_time_intervals: [quiet-hours]
+
+inhibit_rules:
+  # Without the gateway its own media-stack alerts say nothing new.
+  - source_matchers: ['alertname="ScrapeTargetDown"', 'job="gateway"']
+    target_matchers: ['project="media-stack"', 'alertname!="ScrapeTargetDown"']
+
+time_intervals:
+  - name: quiet-hours
+    time_intervals:
+      - times:
+          - { start_time: "23:00", end_time: "24:00" }
+          - { start_time: "00:00", end_time: "08:00" }
+        location: __TZ__
+  - name: heartbeat
+    time_intervals:
+      - times:
+          - { start_time: "10:00", end_time: "10:30" }
+        location: __TZ__
+
+receivers:
+  - name: none
+  - name: critical
+    telegram_configs:
+      - &telegram
+        bot_token_file: /tmp/telegram-token
+        chat_id: __CHAT_ID__ # a file (chat_id_file) would break Grafana's parser of this config
+        parse_mode: HTML
+        message: '{{ template "telegram.message" . }}'
+        send_resolved: true
+        disable_notifications: false
+  - name: warning
+    telegram_configs:
+      - <<: *telegram
+        send_resolved: false
+        disable_notifications: true
+  - name: heartbeat
+    telegram_configs:
+      - <<: *telegram
+        send_resolved: false
+        disable_notifications: true

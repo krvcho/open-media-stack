@@ -1,0 +1,18 @@
+# Alloy pushes every sample here (remote write); Prometheus scrapes only itself, evaluates the alert rules and
+# hands firing alerts to Alertmanager.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,23 @@
+# Upstream clones used for research only; never committed
+_research/
+
+# Secrets and local config
+.env
+*.env.local
+secrets/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Backups made by scripts/backup.sh hold secrets, and restore.sh may leave the archived .env here.
+backups/
+.env.restored
+
+# Compiled Go test binaries (go test -c).
+*.test
+
+# Python bytecode.
+__pycache__/
+*.pyc

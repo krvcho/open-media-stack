@@ -1,0 +1,139 @@
+# Release-title vocabulary for the gateway's parser. Data, not code: add a pattern here to teach the
+# parser a new convention. Patterns are Go regular expressions (RE2), matched case-insensitively against the
+# whole title unless noted; \b works for Cyrillic too. A copy of this file at GW_VOCAB (optional) replaces the
+# built-in one at start-up. An optional corpus test reads gateway/testdata/corpus.jsonl when present.
+
+# Resolution: the first entry whose pattern matches wins, so higher resolutions come first.
+resolution:
+  - {value: 2160, match: ['2160[pр]', '\b4k\b', '\buhd\b', '\b8k\b']}
+  - {value: 1080, match: ['1080[pрi]', '\bfull ?hd\b', '1920x10[0-9]{2}']}
+  - {value: 720, match: ['720[pр]', '1280x7[0-9]{2}']}
+  - {value: 480, match: ['480[pр]', '540[pр]', '576[pр]', '\bdvd(rip|5|9)?\b', '\bsd\b']}
+
+# Source: first match wins, so the most specific comes first.
+source:
+  - {value: cam, match: ['\bcam(rip)?\b', '\bhd ?ts\b', '\btelesync\b', '\bts\b', 'звук с ts', '\btc\b', '\bscreener\b']}
+  - {value: remux, match: ['remux']}
+  - {value: bluray, match: ['bdrip', 'blu-?ray', 'brrip', '\bbd\b', '\bbr\b', '\bbd ?[0-9]{3,4}p', 'hd-?dvd']}
+  - {value: web-dl, match: ['web-?dl', '\bweb\b']}
+  - {value: webrip, match: ['web-?rip', 'hdrip']}
+  - {value: hdtv, match: ['hdtv', 'satrip', 'iptv', 'tvrip', 'dvb']}
+  - {value: dvd, match: ['dvdrip', '\bdvd[59]?\b']}
+
+codec:
+  - {value: av1, match: ['\bav1']}
+  - {value: hevc, match: ['hevc', '\b[hx]\.?265\b']}
+  - {value: avc, match: ['\bavc\b', '\b[hx]\.?264\b']}
+
+hdr: ['\bhdr(10)?\+?(\b|$)', 'hdr10']
+dv: ['dolby ?vision', '\bdv\b', '\bdovi\b']
+threed: ['\b3d\b', '\bbd3d\b', 'стереопара', '\bh?sbs\b', 'over-?under', '\bhalf ?ou\b', 'анаглиф']
+
+# Voice-over types. "match" is searched in the whole title. "codes" are a common title shorthand
+# ("| D, P, A |"); they count only as whole comma-separated tokens after the first "|", so the "A" of a title is
+# not a voice. The shorthand: D dubbing; P, P2, P1 professional multi-, two- and single-voice; L, L2, L1 the
+# same by amateurs; A author's (single-voice) translation.
+voice:
+  - value: dub
+    match: ['дубляж', 'дублир', '\bdub(bed)?\b', '\bdubbing\b', '\bдб\b']
+    codes: [D]
+  - value: mvo
+    match: ['многоголос', '\bmvo\b', '\bпм\b', '\bлм\b']
+    codes: [P, L]
+  - value: dvo
+    match: ['двухголос', 'двуголос', '\bdvo\b', '\bпд\b', '\bлд\b']
+    codes: [P2, L2]
+  - value: avo
+    match: ['авторск', 'одноголос', '\bavo\b', '\bvo\b', '\bап\b', '\bло\b']
+    codes: [A, P1, L1, VO]
+
+# Audio languages, as ISO 639-1 codes (Lampa compares the first two letters).
+language:
+  - {value: ru, match: ['\brus\b', 'русск', '\bru\b(?:\s*/|\s*\+)']}
+  - {value: uk, match: ['\bukr\b', 'укр', '\bua\b', 'українськ']}
+  - {value: en, match: ['\beng?\b', 'english', 'англ', '\bdual\b', '\bdubbed\b']}
+  - {value: ja, match: ['\bjap\b', '\bjpn\b', 'japanese', 'япон', '\bdual\b', '\braw\b']}
+  - {value: pl, match: ['\bpol\b', '\bpl\b', 'lektor', 'polski', 'dubbing pl']}
+  - {value: fr, match: ['\bfrench\b', '\btruefrench\b', '\bvff\b', '\bfra\b']}
+  - {value: it, match: ['\bita\b', 'italian']}
+  - {value: de, match: ['\bger\b', 'german', '\bdeu\b']}
+  - {value: hi, match: ['\bhin\b', 'hindi']}
+  - {value: ta, match: ['\btam\b', 'tamil']}
+  - {value: te, match: ['\btel\b', 'telugu']}
+  - {value: zh, match: ['mandarin', 'cantonese', '国语', '粵語', '中文配音']}
+
+# Removed before language detection: a subtitle marker and the language names after it ("Subs.Ita.Eng",
+# "Napisy PL"). Those name subtitles, not audio.
+subs_languages: ['(?:subs?|napisy)(?:[\s.:_,+/-]+[a-z]{2,8})+']  # no \b here: the pattern removes text
+
+# Subtitles present (any language).
+subs: ['\bsubs?\b', 'субтитр', '\bvostfr\b', 'napisy', '\bhsub\b', 'multi-?subs?', '\bсаб\b', '\bст\b', 'subtitle']
+
+# The release says it carries the original soundtrack.
+original: ['оригинал', '\boriginal\b', '\borig\b', '\braw\b']
+
+# Not a video release (books, music, games, software). Counts only when no resolution and no codec matched.
+junk: ['\bfb2\b', '\bepub\b', '\bpdf\b', '\bdjvu\b', '\bcb[rz]\b', '\bmp3\b', 'мр3', '\bflac\b', '\bost\b',
+       '\bapk\b', '\bdlc\b', 'аудиокниг', 'audiobook', '\bm4b\b', '\bisbn\b', 'lossless', 'soundtrack',
+       'саундтрек', '\[l\]', 'repack', '\bv ?[0-9]+\.[0-9]+', 'комикс', 'манга', '\bpc\b', 'remix', '\[игра\]',
+       'android', 'psvita', '\bpsn\b', 'nonpdrm', '\btenoke\b', '\bfitgirl\b', '\bcodex\b', '\bskidrow\b',
+       '\belamigos\b', '\bdodi\b', '\brune\b', '\bgog\b']
+
+# Voice-over studios as they appear in titles, with the language they voice. Shown in Lampa's voice filter.
+studios:
+  LostFilm: ru
+  NewStudio: ru
+  HDRezka Studio: ru
+  HDRezka: ru
+  Jaskier: ru
+  AlexFilm: ru
+  TVShows: ru
+  Amedia: ru
+  Кубик в Кубе: ru
+  Red Head Sound: ru
+  RHS: ru
+  Iyuno-SDI: ru
+  Novamedia: ru
+  Paramount Comedy: ru
+  SDI Media: ru
+  Пифагор: ru
+  Pifagor: ru
+  Кравец: ru
+  Kravec: ru
+  Flarrow Films: ru
+  SC Produb: ru
+  MovieDalen: ru
+  LineFilm: ru
+  Syncmer: ru
+  BaibaKo: ru
+  Ozz: ru
+  AniLibria: ru
+  AniDub: ru
+  AniMedia: ru
+  Dream Cast: ru
+  SHIZA Project: ru
+  ViruseProject: ru
+  Gears Media: ru
+  Sunshine Studio: ru
+  StudioBand: ru
+  Dubbing-Pro: ru
+  Delta Dubbing: ru
+  Sunnysiders: ru
+  Гоблин: ru
+  TV1000: ru
+  Невафильм: ru
+  Мосфильм: ru
+  Le Production: ru
+  Ukr Dub: uk
+  Так Треба Продакшн: uk
+  НеЗупиняйПродакшн: uk
+  Цікава Ідея: uk
+  DniproFilm: uk
+  Postmodern: uk
+  1+1: uk
+
+# Device classes (Lampa.Platform, sent by the plugin) → codec → score added to the rank. Data, to be
+# filled from playback tests; only what is known so far.
+devices:
+  android:
+    av1: -15 # the reference Chromecast with Google TV 4K has no AV1 decoder (Google Cast media docs)

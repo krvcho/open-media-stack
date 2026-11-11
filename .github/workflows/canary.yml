@@ -1,0 +1,47 @@
+name: canary
+
+# Daily check of our plugin against the pinned Lampa build and against today's upstream build, which stock TV
+# apps load unpinned , and of bookmark and timecode sync between two devices.
+# A failure opens one issue; it stays open until a human closes it.
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  lampa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sh scripts/gen-env.sh
+      - run: docker compose --profile test up -d --build
+      # Also adds the test seeder's indexer to Prowlarr, which the canary's search needs.
+      - run: python3 test/leak/leak_test.py
+      # Playwright drives the runner's preinstalled Chrome (channel "chrome"); no browser download.
+      - run: |
+          python3 -m venv /tmp/pw
+          /tmp/pw/bin/pip install --quiet playwright==1.62.0
+          /tmp/pw/bin/python test/canary/canary_test.py
+          # The sync checks, with two browsers as two devices.
+          /tmp/pw/bin/python test/sync/sync_test.py
+      - if: failure()
+        run: docker compose --profile test logs --tail 60
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Lampa canary failed"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq 'length')
+          if [ "$open" = "0" ]; then
+            gh issue create --title "$title" --body "The daily canary failed: $RUN_URL
+
+          Check whether upstream Lampa (https://github.com/yumata/lampa) changed something our plugin relies on.
+          TVs load upstream unpinned, so they may already be affected."
+          else
+            echo "an open canary issue exists; not opening another"
+          fi

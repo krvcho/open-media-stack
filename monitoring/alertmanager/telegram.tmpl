@@ -1,0 +1,12 @@
+{{/* One Telegram message per alert group, in Telegram's HTML: values are escaped with html. */}}
+{{ define "telegram.message" -}}
+{{ $icon := "🟠" -}}
+{{ if eq .CommonLabels.severity "critical" }}{{ $icon = "🔴" }}{{ end -}}
+{{ if eq .CommonLabels.alertname "Watchdog" }}{{ $icon = "💓" }}{{ end -}}
+{{ if eq .Status "resolved" }}{{ $icon = "✅" }}{{ end -}}
+{{ $icon }} <b>{{ .CommonLabels.alertname | html }}</b>{{ with .CommonLabels.project }} · {{ . | html }}{{ end }}
+{{ range .Alerts.Firing }}• {{ .Annotations.summary | html }}
+{{ end }}{{ range .Alerts.Resolved }}• resolved: {{ .Annotations.summary | html }}
+{{ end -}}
+<a href="__GRAFANA_URL__">Grafana</a>
+{{- end }}

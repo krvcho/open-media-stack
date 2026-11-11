@@ -1,0 +1,62 @@
+# Host and container alerts that hold for any machine. Stack-specific rules live in their
+# own files next to this one.
+groups:
+  - name: host
+    rules:
+      - alert: HostMemoryPressure
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Less than 10 % of the host's memory is available"
+      - alert: HostDiskAlmostFull
+        expr: |
+          node_filesystem_avail_bytes / node_filesystem_size_bytes < 0.10
+            and node_filesystem_readonly == 0
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.mountpoint }} has less than 10 % free"
+      - alert: HostTooHot
+        expr: max by (instance) (node_hwmon_temp_celsius) > 80
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "A host sensor reads {{ $value | humanize }} °C"
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0) > 0.90
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.name }} uses more than 90 % of its memory limit"
+      # Windows machines from EXTRA_TARGETS (windows_exporter). Silent while the PC is off: no series, no alert.
+      - alert: WindowsDiskAlmostFull
+        expr: |
+          windows_logical_disk_free_bytes{volume=~"[A-Z]:"}
+            / windows_logical_disk_size_bytes{volume=~"[A-Z]:"} < 0.10
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} drive {{ $labels.volume }} has {{ $value | humanizePercentage }} free"
+      - alert: ScrapeTargetDown
+        expr: up{job!="windows"} == 0 # a desktop PC is off at times
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) has not answered a scrape for 5 minutes"
+
+  # The chain itself: a heartbeat that always fires, sent once a day, and a check that Alloy still pushes.
+  - name: monitoring
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        labels: { severity: heartbeat }
+        annotations:
+          summary: "Monitoring is alive. If this message does not come one day, Prometheus, Alertmanager or the bot is down."
+      - alert: NoHostMetrics
+        expr: absent_over_time(node_load1[5m])
+        labels: { severity: critical }
+        annotations:
+          summary: "No host metrics for 5 minutes: Alloy is not collecting or not pushing"

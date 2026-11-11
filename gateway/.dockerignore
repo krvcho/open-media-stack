@@ -1,0 +1,9 @@
+*
+!go.mod
+!go.sum
+!*.go
+!vocab.yaml
+!platforms.js
+!platforms.json
+!profiles.js
+*_test.go

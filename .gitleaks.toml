@@ -1,0 +1,8 @@
+# Secret scanning config. Default rules, plus exact fake values used in tests.
+# The single-table [allowlist] form is understood by every gitleaks v8 release.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake token in gateway tests"
+regexes = ['''0123456789abcdef0123456789abcdef''']

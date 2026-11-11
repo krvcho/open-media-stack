@@ -1,0 +1,57 @@
+# promtool test rules: the zero-upload alert fires on any uploaded piece data and stays silent otherwise; a
+# missing Lampac is a warning, a missing Prowlarr is critical; a Windows drive under 10 % free is a warning.
+rule_files:
+  - ../rules/media-stack.yml
+  - ../rules/host.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'gateway_torrent_upload_bytes_total{job="gateway"}'
+        values: "0 0 0 0 16384 16384 16384 16384 16384 16384"
+      - series: 'gateway_upstream_up{job="gateway",service="prowlarr"}'
+        values: "1 0 0 0 0 0 0 0 0 0 0 0 0 0"
+      - series: 'gateway_upstream_up{job="gateway",service="lampac"}'
+        values: "1 0 0 0 0 0 0 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TorrentUploadDetected
+        exp_alerts: []
+      - eval_time: 2m30s
+        alertname: TorrentUploadDetected
+        exp_alerts:
+          - exp_labels: { severity: critical, job: gateway }
+            exp_annotations:
+              summary: "TorrServer uploaded 16kiB of piece data to peers in 2 minutes"
+      - eval_time: 4m30s
+        alertname: UpstreamDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: UpstreamDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: gateway, service: prowlarr }
+            exp_annotations:
+              summary: "prowlarr has not answered the gateway's probe for 5 minutes"
+          - exp_labels: { severity: warning, job: gateway, service: lampac }
+            exp_annotations:
+              summary: "lampac has not answered the gateway's probe for 5 minutes"
+  - interval: 1m
+    input_series:
+      - series: 'windows_logical_disk_free_bytes{instance="pc",job="windows",volume="C:"}'
+        values: "8x20"
+      - series: 'windows_logical_disk_size_bytes{instance="pc",job="windows",volume="C:"}'
+        values: "100x20"
+      - series: 'windows_logical_disk_free_bytes{instance="pc",job="windows",volume="D:"}'
+        values: "60x20"
+      - series: 'windows_logical_disk_size_bytes{instance="pc",job="windows",volume="D:"}'
+        values: "100x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WindowsDiskAlmostFull
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: WindowsDiskAlmostFull
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: pc, job: windows, volume: "C:" }
+            exp_annotations:
+              summary: "pc drive C: has 8% free"

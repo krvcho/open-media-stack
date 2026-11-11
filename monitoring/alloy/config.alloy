@@ -1,0 +1,167 @@
+// Grafana Alloy: the only collector on the host. Host metrics, container metrics and
+// container logs, plus any container that opts in with Prometheus-style labels:
+//   prometheus.io/scrape: "true"   prometheus.io/port: "<port>"   prometheus.io/path: "/metrics" (default)
+
+prometheus.remote_write "local" {
+  endpoint {
+    url = "http://127.0.0.1:9090/api/v1/write"
+  }
+}
+
+// ---- Host ----
+
+prometheus.exporter.unix "host" {
+  rootfs_path    = "/rootfs"
+  udev_data_path = "/rootfs/run/udev/data"
+
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containers/.+)($|/)"
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+// ---- Containers ----
+
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "2m"
+  // Only the Compose project and service as labels: the rest (config hash, image, working dir) changes on every
+  // deploy and would start new series each time.
+  store_container_labels       = false
+  allowlisted_container_labels = ["com.docker.compose.project", "com.docker.compose.service"]
+}
+
+prometheus.scrape "containers" {
+  targets         = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+// ---- Containers that publish their own metrics ----
+
+discovery.docker "scrape" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "label"
+    values = ["prometheus.io/scrape=true"]
+  }
+}
+
+// One target per container: its bridge address and the labelled port. Alloy runs in the host's network, which
+// reaches every bridge network, so the port needs no publishing. A container on two networks yields two targets.
+discovery.relabel "scrape" {
+  targets = discovery.docker.scrape.targets
+
+  rule {
+    source_labels = ["__meta_docker_network_ip", "__meta_docker_container_label_prometheus_io_port"]
+    regex         = "(.+);(.+)"
+    replacement   = "$1:$2"
+    target_label  = "__address__"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_prometheus_io_path"]
+    regex         = "(.+)"
+    target_label  = "__metrics_path__"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "job"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "instance"
+  }
+}
+
+prometheus.scrape "labelled" {
+  targets         = discovery.relabel.scrape.output
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+// ---- Other machines ----
+
+// Hosts outside Docker, such as a Windows PC with windows_exporter, as a JSON list of Prometheus targets in
+// EXTRA_TARGETS, for example [{"__address__":"192.0.2.20:9182","instance":"pc","job":"windows"}]. Empty: none.
+prometheus.scrape "extra" {
+  targets         = encoding.from_json(coalesce(sys.env("EXTRA_TARGETS"), "[]"))
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+// ---- Logs ----
+
+discovery.docker "logs" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.logs.targets
+  relabel_rules = discovery.relabel.logs.rules
+  forward_to    = [loki.process.logs.receiver]
+}
+
+loki.process "logs" {
+  // The level from JSON (`"level":"INFO"`) or logfmt (`level=info`) lines, lower-cased, as the only extra label.
+  stage.regex {
+    expression = "(?i)\"?\\blevel\"?\\s*[=:]\\s*\"?(?P<level>[a-z]+)"
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ ToLower .Value }}"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+
+  // Redaction before anything is stored: each capture group is replaced. The household token in client paths
+  // (media-stack's /h/<token>/), then the value after any key, token, password or secret name.
+  stage.replace {
+    expression = "/h/([^/\\s\"?&]+)"
+    replace    = "<redacted>"
+  }
+  stage.replace {
+    expression = "(?i)(?:api[_-]?key|apikey|token|passw(?:or)?d|pass|secret|authorization|auth|cookie|passkey|(?:^|[^a-zA-Z])uid)\"?\\s*[=:]\\s*\"?(?:Bearer\\s+|Basic\\s+)?([^\"&\\s,;]+)"
+    replace    = "<redacted>"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}

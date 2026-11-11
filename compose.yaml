@@ -1,0 +1,246 @@
+# media-stack: one Compose project, isolated from other stacks on the host.
+# Every upstream image is pinned by tag and digest. Never use `latest`.
+name: media-stack
+
+# Log rotation per service, so the stack does not depend on the host's Docker daemon defaults (at most
+# 3 × 10 MB per container).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gateway:
+    build: ./gateway
+    image: media-stack/gateway:dev
+    # Built locally, never pulled: `compose pull` (and Portainer's "Re-pull image") skips it.
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 128m # measured peak 35 MiB on the Pi, plus 30 %
+    environment:
+      GW_TOKEN: ${HOUSEHOLD_TOKEN:?set HOUSEHOLD_TOKEN in .env}
+      GW_PROWLARR_APIKEY: ${PROWLARR_API_KEY:?set PROWLARR_API_KEY in .env}
+      GW_TORRSERVER_USER: ${TORRSERVER_USER:?set TORRSERVER_USER in .env}
+      GW_TORRSERVER_PASSWORD: ${TORRSERVER_PASSWORD:?set TORRSERVER_PASSWORD in .env}
+      GW_LAMPAC_PORT: ${LAMPAC_PORT:-9118}
+      GW_LAMPAC_ID: ${LAMPAC_HOUSEHOLD_ID:?set LAMPAC_HOUSEHOLD_ID in .env}
+      # TMDB API key (v3) or read access token (v4); empty = Lampa calls TMDB itself with its own key.
+      GW_TMDB_KEY: ${TMDB_API_KEY:-}
+      # Online sources through Lampac: any value turns them on, empty keeps them off.
+      GW_ONLINE_SOURCES: ${ONLINE_SOURCES:-}
+      # TorrServer settings the gateway enforces: RAM cache in MB; upload cap in KB/s, 0 = upload off.
+      GW_TS_CACHE_MB: ${TORRSERVER_CACHE_MB:-512}
+      GW_TS_UPLOAD_KB: ${TORRSERVER_UPLOAD_KB:-0}
+      # TorrServer is reached through the container that holds its network namespace (see torrserver).
+      GW_TORRSERVER_URL: http://${TORRSERVER_EGRESS:-torrserver-net}:8090
+      # gluetun's control server, for the plugin's VPN indicator; set only when TorrServer runs behind the VPN.
+      GW_VPN_CONTROL_URL: ${TORRSERVER_EGRESS:+http://vpn:8000}
+      # Pinned Lampa web build: commit of github.com/yumata/lampa and SHA-256 of its archive.
+      GW_LAMPA_COMMIT: 6fcdfab624f98ac0f7a91244e3d3b637f104a8c2
+      GW_LAMPA_SHA256: 836005ad88a3902f32ec958ea7c00a6b3ad7a94346c581af1d6f2d44108d4911
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    # Metrics on the internal port 8081, never published: the monitoring stack or any Prometheus that
+    # honours these labels scrapes it on the stack's network address.
+    labels:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "8081"
+    volumes:
+      - gateway-data:/data
+    healthcheck:
+      test: ["CMD", "/gateway", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - prowlarr
+      - torrserver
+
+  torrserver:
+    image: ghcr.io/yourok/torrserver:MatriX.150@sha256:2d02152b804946848f032dcca94fa0f096c8840cff3d37e1ba5400c30f70e16b
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: ${TORRSERVER_MEM_LIMIT:-3200m} # measured peak 2.4 GiB with two streams; about 1.2 GiB per concurrent stream, plus 30 %
+    environment:
+      TS_HTTPAUTH: "1"
+      TS_USER: ${TORRSERVER_USER}
+      TS_PASS: ${TORRSERVER_PASSWORD}
+    # Write the single TorrServer account before the upstream entrypoint starts (accs.db).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mkdir -p "$$TS_CONF_PATH" && printf '{"%s":"%s"}' "$$TS_USER" "$$TS_PASS" > "$$TS_CONF_PATH/accs.db" && exec /docker-entrypoint.sh
+    # No published ports: only the gateway reaches TorrServer.
+    volumes:
+      - torrserver-config:/opt/ts/config
+    # TorrServer lives in another container's network namespace: torrserver-net (the stack's network) by
+    # default, or the VPN container with TORRSERVER_EGRESS=vpn and the `vpn` profile.
+    network_mode: service:${TORRSERVER_EGRESS:-torrserver-net}
+
+  # Holds TorrServer's network namespace on the stack's network when the VPN is off. An empty
+  # network_mode would leave TorrServer with no network at all, so the switch is between two holders.
+  torrserver-net:
+    image: ghcr.io/yourok/torrserver:MatriX.150@sha256:2d02152b804946848f032dcca94fa0f096c8840cff3d37e1ba5400c30f70e16b
+    entrypoint: ["sleep", "2147483647"]
+    stop_signal: SIGKILL
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 32m # measured an idle process, plus 30 %
+
+  prowlarr:
+    image: ghcr.io/linuxserver/prowlarr:version-2.7.0.5723@sha256:431d7efebcef466e56adaa40a7a2fa2b0e85159a037b8bf465eaadbf0cf5bedf
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 320m # measured peak 203 MiB, plus 30 %
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-Etc/UTC}
+      PROWLARR__AUTH__APIKEY: ${PROWLARR_API_KEY}
+      # Login required for every client, LAN included. The login itself is created in Prowlarr's first-run
+      # dialog; setting the method here without a user would lock the UI.
+      PROWLARR__AUTH__REQUIRED: Enabled
+    ports:
+      # The UI is for setup only; bound to localhost by default.
+      - "${PROWLARR_BIND:-127.0.0.1}:${PROWLARR_PORT:-9696}:9696"
+    volumes:
+      - prowlarr-config:/config
+
+  lampac:
+    image: ghcr.io/lampac-nextgen/lampac:1.87.8@sha256:9d1c6ea91b73272a3c899d100f96099260b663fe9a34a7f80f20d40549c045f9
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 768m # measured peak 587 MiB with online sources, plus 30 %
+    # Lampac runs as uid 1000 (user lampac), but its image has no /lampac/database, so a new named volume is
+    # root-owned and SQLite could not open it. Start as root, hand the folder to lampac, then drop to it with
+    # setpriv and run the image's own command; no separate init container left behind.
+    # Before that, init.conf is written from the base below plus `"<name>": { "enable": false }` for every source
+    # in LAMPAC_DISABLED_SOURCES: plain names in the environment, so they never reach git and survive
+    # .env parsing, which JSON in a variable did not.
+    user: "0:0"
+    environment:
+      HOME: /lampac
+      MS_DISABLED_SOURCES: ${LAMPAC_DISABLED_SOURCES:-}
+      # Not read by Lampac: a changed init.conf below does not make Compose recreate the container, a changed
+      # environment does, so flipping ONLINE_SOURCES takes effect on the next deploy.
+      MS_ONLINE_SOURCES: ${ONLINE_SOURCES:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        off=""
+        for s in $$(echo "$$MS_DISABLED_SOURCES" | tr ',' ' '); do
+          case "$$s" in *[!A-Za-z0-9_]*) echo "LAMPAC_DISABLED_SOURCES: bad name '$$s'" >&2; exit 1 ;; esac
+          off="$$off, \"$$s\": { \"enable\": false }"
+        done
+        sed "s/^}$$/$$off\n}/" /lampac/init.base.conf > /lampac/init.conf
+        chown lampac:lampac /lampac/database
+        exec setpriv --reuid=lampac --regid=lampac --init-groups /usr/share/dotnet/dotnet Core.dll
+    ports:
+      - "${LAMPAC_PORT:-9118}:9118"
+    configs:
+      - source: lampac-init-conf
+        target: /lampac/init.base.conf
+    volumes:
+      - lampac-database:/lampac/database
+
+  # Optional (`--profile flaresolverr`): answers browser checks (Cloudflare) for the sources that need it.
+  # Prowlarr reaches it at http://flaresolverr:8191; no published port.
+  flaresolverr:
+    profiles: ["flaresolverr"]
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2@sha256:c80ae007ce2ccdcd217a12426e4f039ef763ff90738c808d38810c3e59323767
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 3400m # measured peak 2.5 GiB while solving, plus 30 %
+    environment:
+      LOG_LEVEL: info
+      TZ: ${TZ:-Etc/UTC}
+    # Chromium keeps a throwaway profile in /tmp for every challenge: on the Pi one search wrote about 330 MiB
+    # to the NVMe RAID and deleted it again. Keep it in RAM instead.
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    # Chromium leaves an empty profile directory in /tmp per browser start. Every hour, remove the ones older
+    # than an hour (FlareSolverr's browsers live seconds), so the tmpfs never fills. Same process as upstream's
+    # entrypoint otherwise.
+    entrypoint: ["/usr/bin/dumb-init", "--", "/bin/sh", "-c"]
+    command:
+      - |
+        while sleep 3600; do
+          find /tmp -mindepth 1 -maxdepth 1 -mmin +60 \( -name 'tmp*' -o -name 'org.chromium.Chromium.*' -o -name '.org.chromium.Chromium.*' \) -exec rm -rf {} +
+        done &
+        exec /usr/local/bin/python -u /app/flaresolverr.py
+
+  # Optional (`--profile vpn` plus TORRSERVER_EGRESS=vpn): TorrServer's swarm traffic leaves only through a
+  # WireGuard tunnel. gluetun's firewall is the kill switch: no tunnel, no traffic. Port 8090 is
+  # TorrServer's, for the gateway; TorrServer still fetches .torrent files from the gateway over the Docker
+  # network (172.16.0.0/12 holds Docker's default address pools). If this container is recreated, recreate
+  # TorrServer too: it keeps the old, dead namespace.
+  vpn:
+    profiles: ["vpn"]
+    image: qmcgaw/gluetun:v3.41.3@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 128m # measured peak 61 MiB, plus 30 %
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER:-custom}
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:-}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:-}
+      WIREGUARD_PUBLIC_KEY: ${WIREGUARD_PUBLIC_KEY:-}
+      WIREGUARD_PRESHARED_KEY: ${WIREGUARD_PRESHARED_KEY:-}
+      WIREGUARD_ENDPOINT_IP: ${WIREGUARD_ENDPOINT_IP:-}
+      WIREGUARD_ENDPOINT_PORT: ${WIREGUARD_ENDPOINT_PORT:-51820}
+      WIREGUARD_MTU: ${WIREGUARD_MTU:-1420}
+      SERVER_COUNTRIES: ${VPN_SERVER_COUNTRIES:-}
+      # 8090: TorrServer, for the gateway. 8000: gluetun's control server, read by the gateway for the status.
+      FIREWALL_INPUT_PORTS: "8090,8000"
+      FIREWALL_OUTBOUND_SUBNETS: 172.16.0.0/12
+    configs:
+      - source: gluetun-auth
+        target: /gluetun/auth/config.toml
+
+  # Test-only: local seeder with a generated clip, tracker and Torznab feed (`--profile test`).
+  seeder:
+    profiles: ["test"]
+    build: ./test/seeder
+    image: media-stack/test-seeder:dev
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+
+configs:
+  # gluetun's control server requires auth on every route (v3.39.1+). Only the two read-only routes the
+  # gateway's status uses are open, and only inside the stack's network (port 8000 is not published).
+  gluetun-auth:
+    content: |
+      [[roles]]
+      name = "media-stack status"
+      routes = ["GET /v1/vpn/status", "GET /v1/publicip/ip"]
+      auth = "none"
+  # Lampac reads its configuration only from /lampac/init.conf. Only the Sync modules load; headless
+  # browsers are off. accsdb serves only requests that carry the household's Lampac id.
+  lampac-init-conf:
+    content: |
+      {
+        "BaseModule": { "LoadModules": ["Sync"${ONLINE_SOURCES:+, "Online", "OnlineRUS", "OnlineUKR", "OnlineENG", "OnlineAnime"}], "SkipModules": [] },
+        "accsdb": {
+          "enable": true,
+          "accounts": { "${LAMPAC_HOUSEHOLD_ID:?set LAMPAC_HOUSEHOLD_ID in .env}": "2100-01-01T00:00:00" }
+        },
+        "chromium": { "enable": false },
+        "firefox": { "enable": false }
+      }
+
+volumes:
+  gateway-data:
+  torrserver-config:
+  prowlarr-config:
+  lampac-database:

@@ -1,0 +1,117 @@
+# monitoring: an optional, separate stack. Prometheus keeps metrics, Loki keeps logs, Grafana shows
+# them, Alertmanager sends alerts to Telegram, Alloy collects host, container and log data on this machine. Useful without media-stack: any container
+# with the label prometheus.io/scrape=true is scraped, media-stack's gateway among them. Each service is a pinned
+# upstream image plus our config, built locally, so a Portainer Git stack needs no files on the host.
+name: monitoring
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  prometheus:
+    build: ./prometheus
+    image: monitoring/prometheus:local
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${METRICS_RETENTION:-15d}
+      - --storage.tsdb.retention.size=${METRICS_RETENTION_SIZE:-5GB} # whichever limit is hit first
+      - --web.enable-remote-write-receiver # Alloy pushes; Prometheus scrapes nothing but itself
+    ports:
+      - "127.0.0.1:9090:9090" # for Alloy, which runs in the host's network
+    volumes:
+      - prometheus-data:/prometheus
+    mem_limit: 768m
+
+  loki:
+    build: ./loki
+    image: monitoring/loki:local
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    command: ["-config.file=/etc/loki/config.yaml", "-config.expand-env=true"]
+    environment:
+      LOGS_RETENTION: ${LOGS_RETENTION:-168h}
+    ports:
+      - "127.0.0.1:3100:3100" # for Alloy
+    volumes:
+      - loki-data:/loki
+    mem_limit: 512m
+
+  # Sends alerts to Telegram; without TELEGRAM_BOT_TOKEN it keeps them for Grafana only.
+  alertmanager:
+    build: ./alertmanager
+    image: monitoring/alertmanager:local
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      ALERT_TIMEZONE: ${ALERT_TIMEZONE:-UTC}
+      GRAFANA_URL: ${GRAFANA_URL:-}
+    volumes:
+      - alertmanager-data:/alertmanager # silences and what was sent, so a restart sends nothing twice
+    mem_limit: 128m
+
+  grafana:
+    build: ./grafana
+    image: monitoring/grafana:local
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    ports:
+      - "${GRAFANA_BIND:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - alertmanager
+    mem_limit: 640m # peak 457 MiB in a day on the Pi plus 30 %
+
+  # In the host's network and PID namespace: it reads host metrics, every container's metrics and logs through
+  # the Docker socket (read-only), and reaches containers on their bridge addresses to scrape labelled ones.
+  alloy:
+    build: ./alloy
+    image: monitoring/alloy:local
+    pull_policy: build
+    restart: unless-stopped
+    logging: *logging
+    network_mode: host
+    pid: host
+    command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
+    environment:
+      EXTRA_TARGETS: ${EXTRA_TARGETS:-}
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - alloy-data:/var/lib/alloy
+    depends_on:
+      - prometheus
+      - loki
+    mem_limit: 384m
+
+volumes:
+  prometheus-data:
+  loki-data:
+  alertmanager-data:
+  grafana-data:
+  alloy-data:
