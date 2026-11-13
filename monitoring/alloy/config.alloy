@@ -18,6 +18,12 @@ prometheus.exporter.unix "host" {
     mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containers/.+)($|/)"
     fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
   }
+
+  // Metrics that jobs on the host write themselves, a backup's last success for one: *.prom files in
+  // TEXTFILE_DIR. The path is as this container sees it, so a host directory starts with /rootfs. Empty: none.
+  textfile {
+    directory = sys.env("TEXTFILE_DIR")
+  }
 }
 
 prometheus.scrape "host" {
@@ -98,6 +104,37 @@ prometheus.scrape "labelled" {
 // EXTRA_TARGETS, for example [{"__address__":"192.0.2.20:9182","instance":"pc","job":"windows"}]. Empty: none.
 prometheus.scrape "extra" {
   targets         = encoding.from_json(coalesce(sys.env("EXTRA_TARGETS"), "[]"))
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.local.receiver]
+}
+
+// ---- HTTP probes ----
+
+// Addresses to request every 30 s, as a JSON list in HTTP_PROBES, for services that publish no metrics, for
+// example [{"__address__":"http://127.0.0.1:8085/health","name":"notes","module":"http_2xx"}]. Alloy runs in the
+// host's network, so a port bound to 127.0.0.1 is reachable. Any answer but 2xx within 5 s fails. Empty: none.
+prometheus.exporter.blackbox "probes" {
+  config  = "{ modules: { http_2xx: { prober: http, timeout: 5s } } }"
+  targets = encoding.from_json(coalesce(sys.env("HTTP_PROBES"), "[]"))
+}
+
+// The exporter names the job integrations/blackbox/<name>; make it job="probe", instance="<name>".
+discovery.relabel "probes" {
+  targets = prometheus.exporter.blackbox.probes.targets
+
+  rule {
+    source_labels = ["job"]
+    regex         = "integrations/blackbox/(.+)"
+    target_label  = "instance"
+  }
+  rule {
+    target_label = "job"
+    replacement  = "probe"
+  }
+}
+
+prometheus.scrape "probes" {
+  targets         = discovery.relabel.probes.output
   scrape_interval = "30s"
   forward_to      = [prometheus.remote_write.local.receiver]
 }

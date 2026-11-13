@@ -38,8 +38,8 @@ services:
       # gluetun's control server, for the plugin's VPN indicator; set only when TorrServer runs behind the VPN.
       GW_VPN_CONTROL_URL: ${TORRSERVER_EGRESS:+http://vpn:8000}
       # Pinned Lampa web build: commit of github.com/yumata/lampa and SHA-256 of its archive.
-      GW_LAMPA_COMMIT: 6fcdfab624f98ac0f7a91244e3d3b637f104a8c2
-      GW_LAMPA_SHA256: 836005ad88a3902f32ec958ea7c00a6b3ad7a94346c581af1d6f2d44108d4911
+      GW_LAMPA_COMMIT: 3171201b10a38816378212756b963428836dbf13
+      GW_LAMPA_SHA256: 75237c18e993162582ed40b57444039b8d386801842539a55618f6cb5d64bf7f
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
     # Metrics on the internal port 8081, never published: the monitoring stack or any Prometheus that

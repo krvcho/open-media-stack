@@ -108,6 +108,47 @@ on the server scrapes it over the LAN. Use the server's LAN address below as `<s
 5. **Dashboards → Monitoring → Windows PC** fills within a minute. While the PC sleeps or is off, its target is
    down (`up{job="windows"} == 0`); the ScrapeTargetDown alert ignores `job="windows"` for that reason.
 
+## Watch a service that has no metrics
+
+Alloy can request an address every 30 seconds and alert when it stops answering. It runs in the host's network,
+so a port bound to `127.0.0.1` works. In the monitoring stack's environment set, then redeploy:
+
+```
+HTTP_PROBES=[{"__address__":"http://127.0.0.1:8085/health","name":"notes","module":"http_2xx"}]
+```
+
+Any answer other than 2xx within 5 seconds counts as a failure. The series are `probe_success{job="probe",
+instance="notes"}` and `probe_duration_seconds`; the `ProbeFailed` alert (critical) fires after 3 minutes of
+failures. Several addresses go in the same list.
+
+## Watch a backup job
+
+A job on the host can report its own success, and the `BackupStale` alert (warning) fires when the last success
+is more than 26 hours old.
+
+1. Create a directory for such files on the host, and in the monitoring stack's environment point Alloy at it
+   (the host path with `/rootfs` in front), then redeploy:
+
+   ```sh
+   sudo install -d -m 0755 /var/lib/prometheus/node-exporter
+   ```
+
+   ```
+   TEXTFILE_DIR=/rootfs/var/lib/prometheus/node-exporter
+   ```
+
+2. At the end of the backup script, after everything succeeded, write one line into a `.prom` file there
+   (the job's user needs write access to that file):
+
+   ```sh
+   printf 'backup_last_success_timestamp_seconds{name="notes"} %s\n' "$(date +%s)" \
+     > /var/lib/prometheus/node-exporter/notes_backup.prom
+   ```
+
+3. After the next run, **Explore → Prometheus**, query `time() - backup_last_success_timestamp_seconds`: the age
+   of each backup in seconds. A job that has never written the file has no series, so it raises no alert: run it
+   once and check the query.
+
 ## Alerts to Telegram
 
 What gets sent:

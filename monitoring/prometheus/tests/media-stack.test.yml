@@ -55,3 +55,34 @@ tests:
           - exp_labels: { severity: warning, instance: pc, job: windows, volume: "C:" }
             exp_annotations:
               summary: "pc drive C: has 8% free"
+  # A probe that stops answering is critical after 3 minutes; a backup is stale 26 hours after its last success.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="probe",instance="notes"}'
+        values: "1 1 0x20"
+      - series: 'probe_success{job="probe",instance="other"}'
+        values: "1x22"
+    alert_rule_test:
+      - eval_time: 3m30s
+        alertname: ProbeFailed
+        exp_alerts: []
+      - eval_time: 4m30s
+        alertname: ProbeFailed
+        exp_alerts:
+          - exp_labels: { severity: critical, job: probe, instance: notes }
+            exp_annotations:
+              summary: "notes has not answered its HTTP probe for 3 minutes"
+  - interval: 5m
+    input_series:
+      - series: 'backup_last_success_timestamp_seconds{name="notes"}'
+        values: "0x330"
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 26h15m
+        alertname: BackupStale
+        exp_alerts:
+          - exp_labels: { severity: warning, name: notes }
+            exp_annotations:
+              summary: "The notes backup last succeeded 1d 2h 15m 0s ago"

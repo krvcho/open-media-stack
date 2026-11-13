@@ -146,6 +146,7 @@ var lampaSettings = map[string]any{
 		"blacklist": true, "persons": true, "ads": true, "install_proxy": true, "remote_configuration": true,
 		"metadata": true, // cub /api/ai/video-view metadata (src/core/api/sources/cub.js:577)
 		"lgbt":     true, // remote filter list from tmdb.<cub> (src/services/lgbt.js:12)
+		"friends":  true, // CUB friends and "watching now" (Lampa 3.4.7, src/core/account/friends.js:33)
 	},
 }
 

@@ -97,6 +97,8 @@ services:
     command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
     environment:
       EXTRA_TARGETS: ${EXTRA_TARGETS:-}
+      TEXTFILE_DIR: ${TEXTFILE_DIR:-}
+      HTTP_PROBES: ${HTTP_PROBES:-}
     volumes:
       - /:/rootfs:ro
       - /sys:/sys:ro

@@ -46,6 +46,21 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "{{ $labels.job }} ({{ $labels.instance }}) has not answered a scrape for 5 minutes"
+      # Addresses from HTTP_PROBES. No probes configured: no series, no alert.
+      - alert: ProbeFailed
+        expr: probe_success == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} has not answered its HTTP probe for 3 minutes"
+      # Any backup job that writes backup_last_success_timestamp_seconds{name="..."} into TEXTFILE_DIR after a
+      # good run. 26 hours: a daily job with two hours of slack. A job that never ran has no series and no alert.
+      - alert: BackupStale
+        expr: time() - backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "The {{ $labels.name }} backup last succeeded {{ $value | humanizeDuration }} ago"
 
   # The chain itself: a heartbeat that always fires, sent once a day, and a check that Alloy still pushes.
   - name: monitoring

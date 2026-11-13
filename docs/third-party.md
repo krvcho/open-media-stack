@@ -19,7 +19,7 @@ licence. Licences as GitHub reports them for each repository, checked 2026-11-11
 ### The Lampa web build served by the gateway
 
 At first start the gateway downloads Lampa's published web build from
-[yumata/lampa](https://github.com/yumata/lampa/tree/6fcdfab624f98ac0f7a91244e3d3b637f104a8c2) at the commit pinned in `compose.yaml`
+[yumata/lampa](https://github.com/yumata/lampa/tree/3171201b10a38816378212756b963428836dbf13) at the commit pinned in `compose.yaml`
 (`GW_LAMPA_COMMIT`), checks its SHA-256 and serves it to your devices. It changes one file: `index.html` gets a
 `<script>` that sets Lampa's settings (`injectSettings` in `gateway/lampa.go`); everything else is served as
 published. Lampa is GPL-2.0; its author publishes the build at the link above and its source code in

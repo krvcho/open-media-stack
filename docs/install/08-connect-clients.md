@@ -55,7 +55,9 @@ external one; resume, next episode (with a player from the list in step 4), audi
 3. The plugin turns on **Settings → TorrServer → Built-in client** ("Встроенный клиент"); without it the
    Android app skips TorrServer and its player fails with "3003 Source error".
 4. Install an external player and choose **Android** in **Settings → Player → Player type for torrents**;
-   the system then asks which app to use (**Встроенный** is the app's own player).
+   the system then asks which app to use (**Встроенный** is the app's own player). Since Lampa 3.4.7 any other
+   choice plays in Lampa's own web player instead, after a warning that nothing is transcoded; on a TV box that
+   player decodes fewer formats than a native one.
    For series, pick a player the app hands the whole season to, so the next episode starts by itself:
    **MX Player** (confirmed on Chromecast with Google TV 4K), ViMu, Just+ Player, UPlayer or DDD Player. The app
    gives **Just Player** and the others one file only and never starts the next one itself (lampa-app/LAMPA
